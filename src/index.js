@@ -73,7 +73,7 @@ app.post('/seller-signup-verify', async (req, res) => {
     const token = jwt.sign(
       { account_id: user.id, mobile: user.mobile_number },
       process.env.jwt_secret,
-      { expiresIn: '1h' } 
+      { expiresIn: '48h' } 
     );
 
     await pool.query(`
@@ -90,11 +90,35 @@ app.post('/seller-signup-verify', async (req, res) => {
 });
 
 
-app.post('/create-seller-store', (req, res) => {
+app.post('/create-seller-store', async (req, res) => {
+    //TODO: handling duplicates
     const { storename, storeaddress } = req.body;
-    //create store in store table
-    //unique link ??
-    //get store id from db , and => res.send(storeId,link)
+
+    if (!storename || !storeaddress) {
+        return res.status(400).json({ message: 'Store name and address are required' });
+    }
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ message: 'Unauthorized: No token provided' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, process.env.jwt_secret);   
+        const account_id = decoded.account_id;
+        const storelink = `https://dukaan.com/${storename}`;
+        const result = await pool.query(`
+            INSERT INTO stores (account_id, store_name, store_address, store_link) 
+            VALUES ($1, $2, $3, $4) 
+            RETURNING id
+        `, [account_id, storename, storeaddress, storelink]);
+
+         const store_id = result.rows[0].id;
+        res.json({ store_id, storelink });
+    } catch (error) {
+         console.error('Error while creating store:', error);
+    }
 })
 app.post('/seller-upload-inventory', (req, res) => {
     const { productName, description, mrp, salePrice, image, category } = req.body;
