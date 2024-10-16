@@ -180,10 +180,32 @@ app.post('/seller-accept-orders', (req, res) => {
 
 //buyer endpoints
 
-app.get('/buyer-store-details', (req, res) => {
-    const { storelink } = req.body;
-    //db call to get store details
-    //res.send(storeId, store name, address)
+app.get('/buyer-store-details',async (req, res) => {
+    const { storelink } = req.query;
+    
+    if (!storelink) {
+        return res.status(400).json({ message: 'Store link is required' });
+    }
+    try {
+        const storesResult = await pool.query(`
+        SELECT * FROM stores WHERE store_link = $1
+`       , [storelink]);
+        if (storesResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Store not found' });
+        }   
+        const store = storesResult.rows[0];
+        const storeId = store.id;
+        const storename = store.store_name;
+        const address = store.store_address;
+
+        res.send({
+            storeId,storename, address
+        })
+        
+    } catch (error) {
+      console.error('Error fetching store details:', error);   
+    }
+   
 })
 
 app.get('/buyer-product-details', (req, res) => {
