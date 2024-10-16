@@ -1,11 +1,13 @@
 const express = require('express')
 var jwt = require('jsonwebtoken');
-const { Pool } = require('pg');
-
 const app = express()
 const port = 3000
 app.use(express.json());
 require('dotenv').config()
+
+
+const { Pool } = require('pg');
+
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -19,19 +21,75 @@ pool.connect((err) => {
   }
 });
 
-//console.log(process.env.DATABASE_URL);
+
 app.get('/', (req, res) => {
   res.send('Hello World!')
 })
 
 //seller endpoints
 
-app.post('/seller-signup', (req, res) => {
-    const { otp, mobile } = req.body;
-    //TODO: Create customer account in accounts table
-    //Issue a token.
-    
-})
+app.post('/seller-signup-initiate', async (req, res) => {
+  const { mobile } = req.body;
+
+  if (!mobile) {
+    return res.status(400).json({ message: 'Mobile number is required' });
+  }
+  //TODO: check if user already exists
+  try {
+    const otp = 123456;
+
+    await pool.query(`
+      INSERT INTO accounts (mobile_number, otp) 
+      VALUES ($1, $2)
+      ON CONFLICT (mobile_number) 
+      DO UPDATE SET otp = $2, token = NULL`, [mobile, otp]);
+
+    res.json({ message: 'your OTP ',otp:otp });
+  } catch (error) {
+    console.error('Error during signup initiation:', error);
+    res.status(500).json({ message: 'Internal server error',error: error });
+  }
+});
+
+
+app.post('/seller-signup-verify', async (req, res) => {
+  const { mobile, otp } = req.body;
+    //TODO: check if user already exists
+  if (!mobile || !otp) {
+    return res.status(400).json({ message: 'Mobile number and OTP are required' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT * FROM accounts WHERE mobile_number = $1 AND otp = $2
+    `, [mobile, otp]);
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: 'Invalid mobile number or OTP' });
+    }
+
+    const user = result.rows[0];
+
+    const token = jwt.sign(
+      { account_id: user.id, mobile: user.mobile_number },
+      process.env.jwt_secret,
+      { expiresIn: '1h' } 
+    );
+
+    await pool.query(`
+      UPDATE accounts 
+      SET token = $1 
+      WHERE mobile_number = $2
+    `, [token, mobile]);
+
+    res.json({ token, message: 'Signup successful' });
+  } catch (error) {
+    console.error('Error during OTP verification:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
 app.post('/create-seller-store', (req, res) => {
     const { storename, storeaddress } = req.body;
     //create store in store table
