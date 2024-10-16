@@ -168,15 +168,27 @@ app.post('/seller-upload-inventory',async (req, res) => {
     } catch (error) {
         console.error('Error while uploading inventory:', error);
     }
-//Create a category if it doesn't exist.
-    //Create product
-    //res.send(id, name and image);    
 })
 
-//maybe this is covered in /buyer-place-order
-app.post('/seller-accept-orders', (req, res) => {
-    //
-})
+app.post('/seller-accept-orders', async (req, res) => {
+    const { order_id } = req.body;
+
+    if (!order_id) {
+        return res.status(400).json({ message: 'Order ID is required' });
+    }
+
+    try {
+        await pool.query(`
+            UPDATE orders SET order_status = 'Accepted' WHERE id = $1
+        `, [order_id]);
+
+        res.json({ message: 'Order accepted successfully', orderId: order_id });
+    } catch (error) {
+        console.error('Error while accepting order:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
 
 //buyer endpoints
 
@@ -264,17 +276,131 @@ app.get('/buyer-product-details', async (req, res) => {
 });
 
 
-app.post('/buyer-add-to-cart', (req, res) => {
-    //not sure what to do here
-})
+app.post('/buyer-add-to-cart', async (req, res) => {
+    const { product_id, quantity, storeLink } = req.body;
 
-app.post('/buyer-place-order', (req, res) => {
-    const { otp, mobile ,cart } = req.body;
-    //jwt part
-    ///create new customer if doesnt exist
-    //Create an order for that store & customer 
-    //res.send(orderId)
-})
+    if (!product_id || !quantity || !storeLink) {
+        return res.status(400).json({ message: 'product_id, quantity, and storeLink are required' });
+    }
+
+    try {
+        const storeResult = await pool.query(`
+            SELECT id FROM stores WHERE store_link = $1
+        `, [storeLink]);
+
+        if (storeResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Store not found' });
+        }
+
+        const store_id = storeResult.rows[0].id;
+
+        const productResult = await pool.query(`
+            SELECT * FROM products WHERE id = $1 AND store_id = $2
+        `, [product_id, store_id]);
+
+        if (productResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Product not found in this store' });
+        }
+
+        const session_id = req.headers['session-id'] || req.body.session_id; // assuming this will be sent by the frontend
+
+        if (!session_id) {
+            return res.status(400).json({ message: 'Session ID is required' });
+        }
+
+        const cartItemResult = await pool.query(`
+            SELECT * FROM cart WHERE session_id = $1 AND product_id = $2
+        `, [session_id, product_id]);
+
+        if (cartItemResult.rows.length > 0) {
+            const existingQuantity = cartItemResult.rows[0].quantity + quantity;
+            await pool.query(`
+                UPDATE cart SET quantity = $1 WHERE session_id = $2 AND product_id = $3
+            `, [existingQuantity, session_id, product_id]);
+        } else {
+            await pool.query(`
+                INSERT INTO cart (session_id, product_id, quantity, store_id) 
+                VALUES ($1, $2, $3, $4)
+            `, [session_id, product_id, quantity, store_id]);
+        }
+
+        res.json({ message: 'Item added to cart successfully' });
+
+    } catch (error) {
+        console.error('Error while adding to cart:', error);
+    }
+});
+
+
+app.post('/buyer-place-order', async (req, res) => {
+    const { otp, mobile, cart } = req.body;
+
+    if (!otp || !mobile || !cart || cart.length === 0) {
+        return res.status(400).json({ message: 'OTP, mobile number, and cart are required' });
+    }
+
+    try {
+
+        const customerResult = await pool.query(`
+            INSERT INTO customers (mobile_number) 
+            VALUES ($1) 
+            ON CONFLICT (mobile_number) 
+            DO NOTHING 
+            RETURNING id
+        `, [mobile]);
+
+        const customer_id = customerResult.rows.length > 0 ? customerResult.rows[0].id : (await pool.query(`
+            SELECT id FROM customers WHERE mobile_number = $1
+        `, [mobile])).rows[0].id;
+
+        let total_price = 0;
+        const orderItems = [];
+
+        for (const item of cart) {
+            const { product_id, quantity, store_id } = item;
+
+            const productResult = await pool.query(`
+                SELECT sale_price FROM products WHERE id = $1 AND store_id = $2
+            `, [product_id, store_id]);
+
+            if (productResult.rows.length === 0) {
+                return res.status(404).json({ message: `Product ID ${product_id} not found in store ID ${store_id}` });
+            }
+
+            const price = productResult.rows[0].sale_price;
+            total_price += price * quantity;
+
+            orderItems.push({
+                product_id,
+                quantity,
+                price 
+            });
+        }
+
+        const orderResult = await pool.query(`
+            INSERT INTO orders (store_id, customer_id, total_price) 
+            VALUES ($1, $2, $3) 
+            RETURNING id
+        `, [cart[0].store_id, customer_id, total_price]);
+
+        const order_id = orderResult.rows[0].id;
+
+        for (const item of orderItems) {
+            await pool.query(`
+                INSERT INTO order_items (order_id, product_id, quantity, price) 
+                VALUES ($1, $2, $3, $4)
+            `, [order_id, item.product_id, item.quantity, item.price]);
+        }
+
+        res.json({ message: 'Order placed successfully', orderId: order_id });
+
+    } catch (error) {
+        console.error('Error while placing order:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`)
 })
