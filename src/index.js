@@ -1,8 +1,25 @@
 const express = require('express')
 var jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+
 const app = express()
 const port = 3000
+app.use(express.json());
+require('dotenv').config()
 
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+});
+
+pool.connect((err) => {
+  if (err) {
+    console.error('Error connecting to the database', err);
+  } else {
+    console.log('Connected to PostgreSQL database');
+  }
+});
+
+//console.log(process.env.DATABASE_URL);
 app.get('/', (req, res) => {
   res.send('Hello World!')
 })
