@@ -208,25 +208,61 @@ app.get('/buyer-store-details',async (req, res) => {
    
 })
 
-app.get('/buyer-product-details', (req, res) => {
-    const { storelink } = req.body;
-    //db call to get all products in that store,
-    /* eg response:
-    Clothing (10 products):
+app.get('/buyer-product-details', async (req, res) => {
+    const { storelink } = req.query;
 
-    T-shirt
-    Jeans
-    Jacket
-    Sneakers
-    ... (6 more products)
+    if (!storelink) {
+        return res.status(400).json({ message: 'Store link is required' });
+    }
 
-Home & Kitchen (7 products):
+    try {
+        
+        const storeResult = await pool.query(`
+            SELECT id FROM stores WHERE store_link = $1
+        `, [storelink]);
 
-    Blender
-    Coffee Maker
-    Vacuum Cleaner
-    ... (4 more products) */
-})
+        if (storeResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Store not found' });
+        }
+
+        const storeId = storeResult.rows[0].id;
+        const productsResult = await pool.query(`
+            SELECT c.category_name, p.product_name
+            FROM products p
+            JOIN categories c ON p.category_id = c.id
+            WHERE p.store_id = $1
+            ORDER BY c.category_name, p.product_name
+        `, [storeId]);
+
+        const catalog = {};
+        productsResult.rows.forEach(product => {
+            const { category_name, product_name } = product;
+
+            if (!catalog[category_name]) {
+                catalog[category_name] = {
+                    count: 0,
+                    products: []
+                };
+            }
+            catalog[category_name].count++;
+            catalog[category_name].products.push(product_name);
+        });
+
+        const sortedCatalog = Object.entries(catalog)
+            .sort((a, b) => b[1].count - a[1].count)
+            .map(([category_name, { count, products }]) => ({
+                category_name,
+                count,
+                products
+            }));
+
+        res.json(sortedCatalog);
+    } catch (error) {
+        console.error('Error fetching product details:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 
 app.post('/buyer-add-to-cart', (req, res) => {
     //not sure what to do here
@@ -242,6 +278,3 @@ app.post('/buyer-place-order', (req, res) => {
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`)
 })
-
-
-//TODO: postgres db and then jwt part
