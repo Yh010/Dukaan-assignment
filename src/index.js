@@ -120,8 +120,54 @@ app.post('/create-seller-store', async (req, res) => {
          console.error('Error while creating store:', error);
     }
 })
-app.post('/seller-upload-inventory', (req, res) => {
-    const { productName, description, mrp, salePrice, image, category } = req.body;
+app.post('/seller-upload-inventory',async (req, res) => {
+    const { productName, description, mrp, salePrice, image, category ,store_id } = req.body;
+     if (!productName || !description || !mrp || !salePrice || !image || !category || !store_id) {
+        return res.status(400).json({ message: 'productName, description, mrp, salePrice, image, category , store_id are required' });
+     }
+    
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ message: 'Unauthorized: No token provided' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.jwt_secret);
+        const account_id = decoded.account_id;
+
+        let category_id;
+
+        const categoryResult = await pool.query(`
+            SELECT id FROM categories WHERE category_name = $1
+    `   , [category]); 
+
+        
+        if (categoryResult.rows.length > 0) {
+            category_id = categoryResult.rows[0].id;
+        } else {
+            const newCategoryResult = await pool.query(`
+                INSERT INTO categories (category_name, store_id) VALUES ($1, $2) RETURNING id
+        `   , [category, store_id]);
+            category_id = newCategoryResult.rows[0].id;
+        }
+
+        const productResult = await pool.query(`
+            INSERT INTO products (store_id, category_id, product_name, description, mrp, sale_price, image_url) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7) 
+            RETURNING id
+        `, [store_id, category_id, productName, description, mrp, salePrice, image]);
+
+        const product_id = productResult.rows[0].id;
+        res.json({
+            message: "product created successfully",
+            details:{ id: product_id, name: productName, image}
+        });
+
+    } catch (error) {
+        console.error('Error while uploading inventory:', error);
+    }
 //Create a category if it doesn't exist.
     //Create product
     //res.send(id, name and image);    
